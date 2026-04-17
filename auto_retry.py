@@ -9,7 +9,6 @@ Controls:
 
 Visual feedback:
   • Tray icon: lime dot = idle, red dot = active
-  • Cursor colour: lime when idle, red when scanning
   • Desktop notifications on state changes
 
 Requirements:
@@ -21,7 +20,6 @@ import os
 import re
 import threading
 import datetime
-import ctypes
 import pyautogui
 import keyboard
 import pystray
@@ -43,19 +41,6 @@ APP_NAME          = "AutoRetry"
 ACTIVE_DOT_COLOR = (255,   0,   4)   # #FF0004 — red  (scanner ON)
 IDLE_DOT_COLOR   = (203, 255,   0)   # #CBFF00 — lime (scanner OFF)
 
-# Win32 OCR_ cursor IDs — we recolour ALL of them so every cursor is consistent
-_OCR_NORMAL    = 32512   # IDC_ARROW
-_OCR_IBEAM     = 32513
-_OCR_WAIT      = 32514
-_OCR_CROSS     = 32515
-_OCR_UP        = 32516
-_OCR_SIZENWSE  = 32642
-_OCR_SIZENESW  = 32643
-_OCR_SIZEWE    = 32644
-_OCR_SIZENS    = 32645
-_OCR_SIZEALL   = 32646
-_ALL_OCR = [_OCR_NORMAL, _OCR_IBEAM, _OCR_WAIT, _OCR_CROSS, _OCR_UP,
-            _OCR_SIZENWSE, _OCR_SIZENESW, _OCR_SIZEWE, _OCR_SIZENS, _OCR_SIZEALL]
 
 # ──────────────────────────────────────────────
 # State
@@ -108,126 +93,6 @@ def notify(title: str, message: str) -> None:
     except Exception as e:
         print(f"[Notification error] {e}")
 
-
-# ──────────────────────────────────────────────
-# Cursor helpers  (Win32 SetSystemCursor approach)
-# ──────────────────────────────────────────────
-
-def _make_arrow_image(r: int, g: int, b: int, size: int = 32) -> Image.Image:
-    """Draw a filled arrow-pointer shape in the given colour (RGBA image)."""
-    img  = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    s    = size
-    # Classic arrow — hotspot at top-left corner (0, 0)
-    arrow = [
-        (0,    0),
-        (0,    s - 8),
-        (4,    s - 12),
-        (8,    s - 5),
-        (11,   s - 8),
-        (7,    s - 16),
-        (s//3, s//3),
-    ]
-    draw.polygon(arrow, fill=(r, g, b, 255))
-    # Thin dark outline for visibility on any background
-    draw.line([(0, 0), (0,    s - 8)],   fill=(0, 0, 0, 200), width=1)
-    draw.line([(0, 0), (s//3, s//3)],    fill=(0, 0, 0, 200), width=1)
-    return img
-
-
-def _image_to_hcursor(img: Image.Image,
-                      hotspot_x: int = 0, hotspot_y: int = 0) -> int:
-    """Convert a PIL RGBA Image to a Windows HCURSOR via CreateIconIndirect."""
-    user32 = ctypes.windll.user32
-    gdi32  = ctypes.windll.gdi32
-    w, h   = img.size
-
-    # Swap R↔B channels to get Windows BGRA ordering
-    r_ch, g_ch, b_ch, a_ch = img.split()
-    bgra = Image.merge("RGBA", (b_ch, g_ch, r_ch, a_ch)).tobytes()
-
-    class BITMAPINFOHEADER(ctypes.Structure):
-        _fields_ = [
-            ("biSize",          ctypes.c_uint32),
-            ("biWidth",         ctypes.c_int32),
-            ("biHeight",        ctypes.c_int32),   # negative = top-down
-            ("biPlanes",        ctypes.c_uint16),
-            ("biBitCount",      ctypes.c_uint16),
-            ("biCompression",   ctypes.c_uint32),
-            ("biSizeImage",     ctypes.c_uint32),
-            ("biXPelsPerMeter", ctypes.c_int32),
-            ("biYPelsPerMeter", ctypes.c_int32),
-            ("biClrUsed",       ctypes.c_uint32),
-            ("biClrImportant",  ctypes.c_uint32),
-        ]
-
-    class ICONINFO(ctypes.Structure):
-        _fields_ = [
-            ("fIcon",    ctypes.c_bool),
-            ("xHotspot", ctypes.c_uint32),
-            ("yHotspot", ctypes.c_uint32),
-            ("hbmMask",  ctypes.c_void_p),
-            ("hbmColor", ctypes.c_void_p),
-        ]
-
-    # --- colour DIB section ---
-    bmi            = BITMAPINFOHEADER()
-    bmi.biSize     = ctypes.sizeof(BITMAPINFOHEADER)
-    bmi.biWidth    = w
-    bmi.biHeight   = -h          # negative → top-down
-    bmi.biPlanes   = 1
-    bmi.biBitCount = 32          # 32-bit BGRA
-
-    dc    = user32.GetDC(None)
-    pv    = ctypes.c_void_p()
-    hbm_c = gdi32.CreateDIBSection(dc, ctypes.byref(bmi), 0,
-                                    ctypes.byref(pv), None, 0)
-    user32.ReleaseDC(None, dc)
-    if not hbm_c:
-        raise OSError("CreateDIBSection failed")
-    ctypes.memmove(pv, bgra, len(bgra))
-
-    # --- monochrome mask (all 0 → colour bitmap controls per-pixel alpha) ---
-    hbm_m = gdi32.CreateBitmap(w, h, 1, 1,
-                                ctypes.create_string_buffer(w * h // 8))
-
-    ii          = ICONINFO()
-    ii.fIcon    = False          # False = cursor (not icon)
-    ii.xHotspot = hotspot_x
-    ii.yHotspot = hotspot_y
-    ii.hbmMask  = hbm_m
-    ii.hbmColor = hbm_c
-
-    hcursor = user32.CreateIconIndirect(ctypes.byref(ii))
-    gdi32.DeleteObject(hbm_c)
-    gdi32.DeleteObject(hbm_m)
-    return hcursor
-
-
-def _apply_cursor_color(r: int, g: int, b: int) -> None:
-    """Replace every system cursor with a freshly drawn coloured arrow."""
-    try:
-        user32  = ctypes.windll.user32
-        hcursor = _image_to_hcursor(_make_arrow_image(r, g, b))
-        # SetSystemCursor takes ownership of the handle, so give it a fresh
-        # copy for each cursor ID.
-        # NOTE: CopyCursor is a C macro → the real DLL export is CopyIcon.
-        for ocr_id in _ALL_OCR:
-            user32.SetSystemCursor(user32.CopyIcon(hcursor), ocr_id)
-        user32.DestroyCursor(hcursor)
-        print(f"[{time.strftime('%H:%M:%S')}] 🖱️  Cursor → #{r:02X}{g:02X}{b:02X}")
-    except Exception as e:
-        print(f"[Cursor error] {e}")
-
-
-def _restore_cursors() -> None:
-    """Reload all system cursors from the current Windows cursor scheme."""
-    ctypes.windll.user32.SystemParametersInfoW(
-        0x0057,   # SPI_SETCURSORS
-        0, None,
-        0x03,     # SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
-    )
-    print(f"[{time.strftime('%H:%M:%S')}] 🖱️  Cursors restored to system scheme")
 
 
 def log_click_to_tracker() -> None:
@@ -296,14 +161,10 @@ def toggle_running() -> None:
     _update_tray(state)   # update dot colour in taskbar
 
     if state:
-        # ACTIVE: red cursor — scanner is hunting for the Retry button
-        _apply_cursor_color(*ACTIVE_DOT_COLOR)
-        print(f"\n[{time.strftime('%H:%M:%S')}] ▶️  Scanner STARTED — cursor → 🔴 red  (Press {HOTKEY.upper()} to stop)")
+        print(f"\n[{time.strftime('%H:%M:%S')}] ▶️  Scanner STARTED (Press {HOTKEY.upper()} to stop)")
         notify("Started ▶️", f"Now scanning. Press {HOTKEY.upper()} to stop.")
     else:
-        # IDLE: lime cursor — scanner is paused
-        _apply_cursor_color(*IDLE_DOT_COLOR)
-        print(f"\n[{time.strftime('%H:%M:%S')}] ⏹️  Scanner STOPPED — cursor → 🟢 lime  (Press {HOTKEY.upper()} to resume)")
+        print(f"\n[{time.strftime('%H:%M:%S')}] ⏹️  Scanner STOPPED (Press {HOTKEY.upper()} to resume)")
         notify("Stopped ⏹️", f"Scanner paused. Press {HOTKEY.upper()} to resume.")
 
 
@@ -340,8 +201,7 @@ def scan_loop() -> None:
 # Entry point
 # ──────────────────────────────────────────────
 def _quit_app(icon: pystray.Icon | None = None, item=None) -> None:
-    """Cleanly shut down: restore cursors, print summary, stop tray."""
-    _restore_cursors()
+    """Cleanly shut down: print summary, stop tray."""
     print(f"\n\n📊 Session summary: {session_clicks} click(s) this session.")
     print(f"   Full log → {TRACKER_FILE}")
     print("👋 Exiting AutoRetry. Goodbye!")
@@ -365,12 +225,10 @@ def main() -> None:
     print("=" * 52)
     print(f"  Hotkey  : {HOTKEY.upper()} to toggle ON / OFF")
     print(f"  Image   : {BUTTON_IMAGE}")
-    print(f"  Cursor  : 🟢 lime when idle  │  🔴 red when scanner is active")
+
     print(f"  Tray    : lime dot = idle  │  red dot = scanning")
     print("  Right-click the tray icon to toggle or quit.\n")
 
-    # Apply lime cursor — scanner starts as OFF
-    _apply_cursor_color(*IDLE_DOT_COLOR)
     keyboard.add_hotkey(HOTKEY, toggle_running)
     threading.Thread(target=scan_loop, daemon=True).start()
 
