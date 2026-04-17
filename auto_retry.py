@@ -4,7 +4,7 @@ auto_retry.py
 Auto-clicks a 'Retry' button found on screen using image recognition.
 
 Controls:
-  `       →  Toggle the scanner ON / OFF
+  ESC     →  Toggle the scanner ON / OFF
   System tray icon (right-click to toggle / quit)
 
 Visual feedback:
@@ -34,7 +34,7 @@ TRACKER_FILE      = os.path.join(os.path.dirname(__file__), "clickcounttracker.m
 SCAN_INTERVAL     = 0          # seconds between scans when idle (0 = no delay)
 POST_CLICK_WAIT   = 0          # seconds to wait after a successful click (0 = none)
 CONFIDENCE        = 0.8        # image-match confidence (0.0 – 1.0)
-HOTKEY            = "`"        # toggle hotkey
+HOTKEY            = "esc"      # toggle hotkey
 APP_NAME          = "AutoRetry"
 
 # Cursor / tray icon colours  (PIL RGB tuples)

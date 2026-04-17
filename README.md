@@ -45,9 +45,9 @@ AutoRetry provides multiple layers of rich feedback so you always know exactly w
 
 ## 🎮 How to Use
 - The scanner starts **idle** (represented by a lime cursor/tray icon). 
-- **Toggle ON/OFF**: Press the **\`** key (backtick, usually right below `Esc`) to activate the scanner. Your cursor and tray icon will turn red.
+- **Toggle ON/OFF**: Press the **ESC** key to activate the scanner. Your cursor and tray icon will turn red.
 - You can leave it running in the background. It only clicks when your target image appears on screen. 
-- Press **\`** again to pause it.
+- Press **ESC** again to pause it.
 - **To Quit**: Either right-click the system tray dot icon and hit "Quit", or press `Ctrl + C` in the console.
 
 ---
